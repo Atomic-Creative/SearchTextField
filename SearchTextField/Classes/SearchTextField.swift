@@ -25,6 +25,8 @@ open class SearchTextField: UITextField {
     /// Indicate if keyboard is showing or not
     open var keyboardIsShowing = false
     
+    open var filterFunc: ((String, [SearchTextFieldItem]) -> [SearchTextFieldItem]?)? = nil
+    
     /// Set your custom visual theme, or just choose between pre-defined SearchTextFieldTheme.lightTheme() and SearchTextFieldTheme.darkTheme() themes
     open var theme = SearchTextFieldTheme.lightTheme() {
         didSet {
@@ -399,6 +401,23 @@ open class SearchTextField: UITextField {
         }
     }
     
+    open func updateItemHighlightAttributes(item: SearchTextFieldItem, titleRange: NSRange, subtitleRange: NSRange) {
+        item.attributedTitle = NSMutableAttributedString(string: item.title)
+        item.attributedSubtitle = NSMutableAttributedString(string: (item.subtitle != nil ? item.subtitle! : ""))
+        
+        item.attributedTitle!.setAttributes(highlightAttributes, range: titleRange)
+        
+        if subtitleRange.location != NSNotFound {
+            item.attributedSubtitle!.setAttributes(highlightAttributesForSubtitle(), range: subtitleRange)
+        }
+    }
+    
+    open func updateItemInlineSuffix(_ item: SearchTextFieldItem, _ prefix: String) {
+        let indexFrom = prefix.index(prefix.startIndex, offsetBy: prefix.count)
+        let itemSuffix = item.title[indexFrom...]
+        item.attributedTitle = NSMutableAttributedString(string: String(itemSuffix))
+    }
+    
     open func hideResultsList() {
         if let tableFrame:CGRect = tableView?.frame {
             let newFrame = CGRect(x: tableFrame.origin.x, y: tableFrame.origin.y, width: tableFrame.size.width, height: 0.0)
@@ -409,60 +428,55 @@ open class SearchTextField: UITextField {
         }
     }
     
+    open func resetPlaceholder() {
+        self.placeholderLabel?.text = nil
+    }
+    
     fileprivate func filter(forceShowAll addAll: Bool) {
         clearResults()
         
-        if text!.count < minCharactersNumberToStartFiltering {
-            return
-        }
-        
-        for i in 0 ..< filterDataSource.count {
+        let defaultFilter: (String, [SearchTextFieldItem]) -> [SearchTextFieldItem]? = { query, items in
+            guard query.count > self.minCharactersNumberToStartFiltering else { return nil }
             
-            let item = filterDataSource[i]
-            
-            if !inlineMode {
-                // Find text in title and subtitle
-                let titleFilterRange = (item.title as NSString).range(of: text!, options: comparisonOptions)
-                let subtitleFilterRange = item.subtitle != nil ? (item.subtitle! as NSString).range(of: text!, options: comparisonOptions) : NSMakeRange(NSNotFound, 0)
+            var results = [SearchTextFieldItem]()
+            for item in items {
+                if !self.inlineMode {
                 
-                if titleFilterRange.location != NSNotFound || subtitleFilterRange.location != NSNotFound || addAll {
-                    item.attributedTitle = NSMutableAttributedString(string: item.title)
-                    item.attributedSubtitle = NSMutableAttributedString(string: (item.subtitle != nil ? item.subtitle! : ""))
+                    let titleFilterRange = (item.title as NSString).range(of: query, options: self.comparisonOptions)
+                    let subtitleFilterRange = item.subtitle != nil ? (item.subtitle! as NSString).range(of: query, options: self.comparisonOptions) : NSMakeRange(NSNotFound, 0)
                     
-                    item.attributedTitle!.setAttributes(highlightAttributes, range: titleFilterRange)
-                    
-                    if subtitleFilterRange.location != NSNotFound {
-                        item.attributedSubtitle!.setAttributes(highlightAttributesForSubtitle(), range: subtitleFilterRange)
+                    if titleFilterRange.location != NSNotFound || subtitleFilterRange.location != NSNotFound || addAll {
+                        self.updateItemHighlightAttributes(item: item, titleRange: titleFilterRange, subtitleRange: subtitleFilterRange)
+                        results.append(item)
+                    }
+                } else {
+                    var textToFilter = query.lowercased()
+                    if let filterAfter = self.startFilteringAfter {
+                        if let suffixToFilter = textToFilter.components(separatedBy: filterAfter).last, (suffixToFilter != "" || self.startSuggestingInmediately == true), textToFilter != suffixToFilter {
+                            textToFilter = suffixToFilter
+                        } else {
+                            self.placeholderLabel?.text = ""
+                            return nil
+                        }
                     }
                     
-                    filteredResults.append(item)
-                }
-            } else {
-                var textToFilter = text!.lowercased()
-                
-                if inlineMode, let filterAfter = startFilteringAfter {
-                    if let suffixToFilter = textToFilter.components(separatedBy: filterAfter).last, (suffixToFilter != "" || startSuggestingInmediately == true), textToFilter != suffixToFilter {
-                        textToFilter = suffixToFilter
-                    } else {
-                        placeholderLabel?.text = ""
-                        return
+                    if item.title.lowercased().hasPrefix(textToFilter) {
+                        self.updateItemInlineSuffix(item, textToFilter)
+                        results.append(item)
                     }
-                }
-                
-                if item.title.lowercased().hasPrefix(textToFilter) {
-                    let indexFrom = textToFilter.index(textToFilter.startIndex, offsetBy: textToFilter.count)
-                    let itemSuffix = item.title[indexFrom...]
-                    
-                    item.attributedTitle = NSMutableAttributedString(string: String(itemSuffix))
-                    filteredResults.append(item)
                 }
             }
+            return results
         }
         
-        tableView?.reloadData()
+        let flt = filterFunc ?? defaultFilter
+        guard let results = flt(text!, filterDataSource) else { return }
+        filteredResults = results
         
         if inlineMode {
             handleInlineFiltering()
+        } else {
+            tableView?.reloadData()
         }
     }
     
