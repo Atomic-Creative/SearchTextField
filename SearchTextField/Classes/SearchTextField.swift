@@ -471,9 +471,7 @@ open class SearchTextField: UITextField {
                     }
                     
                     if item.title.lowercased().hasPrefix(textToFilter) {
-                        let indexFrom = textToFilter.index(textToFilter.startIndex, offsetBy: textToFilter.characters.count)
                         self.updateItemInlineSuffix(item, textToFilter)
-                        item.attributedTitle = NSMutableAttributedString(string: String(itemSuffix))
                         results.append(item)
                     }
                 }
